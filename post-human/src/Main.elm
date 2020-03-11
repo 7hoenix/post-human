@@ -17,6 +17,7 @@ type HttpResponse = HttpResponse String
 type alias Model =
     { url : String
     , response : Maybe HttpResponse
+    , dataFields : List (String, String)
     , error : Maybe PostHumanError
     }
 
@@ -26,6 +27,7 @@ init =
     ( { url = ""
       , error = Nothing
       , response = Nothing
+      , dataFields = []
       }
       , Cmd.none )
 
@@ -37,35 +39,54 @@ init =
 type Msg
     = UrlUpdated String
     | HttpResponseReturned (Result Http.Error String)
-    | NoOp
     | SendHttpRequestButtonClicked
+    | KeyUpdated Int String
+    | ValueUpdated Int String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
-             ( model, Cmd.none )
-
         SendHttpRequestButtonClicked ->
-           ( model, getUrl model.url )
+           ( model, getUrl model.url model.dataFields)
 
         HttpResponseReturned (Err error) ->
-           ( { model | error = Just (toHttpError error) }, Cmd.none)
+           ( { model | error = Just (toHttpError error), response = Nothing }, Cmd.none)
 
 
         HttpResponseReturned (Ok response) ->
-            ( { model | response = Just <| HttpResponse response }, Cmd.none)
+            ( { model | response = Just <| HttpResponse response, error = Nothing }, Cmd.none)
 
         UrlUpdated url ->
             ( { model | url = url }, Cmd.none)
 
-getUrl : String -> Cmd Msg
-getUrl url =
+        KeyUpdated idx newKey ->
+          if idx == List.length model.dataFields then
+            ( { model | dataFields = model.dataFields ++ List.singleton (newKey, "") }, Cmd.none )
+          else
+            ( { model | dataFields = List.indexedMap (\i (k, v) -> if i == idx then (newKey, v) else (k, v) ) model.dataFields }, Cmd.none )
+
+        ValueUpdated idx newValue ->
+          if idx == List.length model.dataFields then
+            ( { model | dataFields = model.dataFields ++ List.singleton ("", newValue) }, Cmd.none )
+          else
+            ( { model | dataFields = List.indexedMap (\i (k, v) -> if i == idx then (k, newValue) else (k, v) ) model.dataFields }, Cmd.none )
+
+getUrl : String -> List (String, String) -> Cmd Msg
+getUrl url dataFields =
   Http.get
-    { url = url
+    { url = toFullUrl url dataFields
     , expect = Http.expectString HttpResponseReturned
     }
+
+
+toFullUrl : String -> List (String, String) -> String
+toFullUrl url dataFields =
+    url ++ "?" ++ (String.join "&" (List.map presentDataField dataFields))
+
+presentDataField : (String, String) -> String
+presentDataField (k, v) =
+  k ++ "=" ++ v
 
 toHttpError : Http.Error -> PostHumanError
 toHttpError error =
@@ -92,13 +113,24 @@ toHttpError error =
 view : Model -> Html Msg
 view model =
     div []
-        [ p [] [ text model.url ]
+        [ p [] [ text <| toFullUrl model.url model.dataFields ]
         , input [ placeholder "URL", value model.url, onInput UrlUpdated ] []
+        , viewDataFields model.dataFields
         , p [] [ text (displayError model.error) ]
         , div [] [ text (displayHttpResponse model.response)]
         , button [ onClick SendHttpRequestButtonClicked ] [ text "do stuff"]
         ]
 
+viewDataFields : List (String, String) -> Html Msg
+viewDataFields dataFields =
+  div [] <| (List.indexedMap viewDataField dataFields) ++ [ viewDataField (List.length dataFields) ("","") ]
+
+viewDataField : Int -> (String, String) -> Html Msg
+viewDataField idx (k, v) =
+  div []
+    [ input [ placeholder "Key", value k, onInput (\s -> KeyUpdated idx s) ] []
+    , input [ placeholder "Value", value v, onInput (\s -> ValueUpdated idx s) ] []
+    ]
 
 displayHttpResponse : Maybe HttpResponse -> String
 displayHttpResponse httpResponse =
